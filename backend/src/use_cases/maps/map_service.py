@@ -122,9 +122,21 @@ class MapService:
         return json.loads(data)
 
     async def upload_image(self, data: bytes, filename: str) -> str:
-        ext = os.path.splitext(filename)[1] or ".png"
+        ext = (os.path.splitext(filename)[1] or ".png").lower()
+
+        # Convert first page of PDF to PNG on the backend
+        if ext == ".pdf":
+            import fitz  # PyMuPDF
+            pdf = fitz.open(stream=data, filetype="pdf")
+            page = pdf.load_page(0)
+            pix = page.get_pixmap(dpi=150)
+            data = pix.tobytes("png")
+            pdf.close()
+            ext = ".png"
+            filename = os.path.splitext(filename)[0] + ".png"
+
         image_id = f"{uuid.uuid4()}{ext}"
-        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        content_type = mimetypes.guess_type(filename)[0] or "image/png"
         await self._storage.upload(bucket="maps", key=f"images/{image_id}", data=data, content_type=content_type)
         return image_id
 

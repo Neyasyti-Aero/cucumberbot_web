@@ -36,9 +36,12 @@ import {
   IconPhoto,
   IconPhotoPlus,
   IconCrosshair,
+  IconArrowsMove,
+  IconRectangle,
+  IconRuler2,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet'
+import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -49,6 +52,9 @@ import { MeterGrid } from './MeterGrid'
 import { featuresToGeoJSON, geoJSONToFeatures } from '../lib/geojson'
 import { createTemplate, getImageBlobUrl, getLayout, updateLayout, uploadImage } from '../api/templates'
 import { useMapTemplates } from '../model/useMapTemplates'
+import { applyImageCalibration } from '../lib/calibration'
+import { calibPointIcon, dimensionLabel } from '../lib/icons'
+import { ImageCalibModal } from './ImageCalibModal'
 
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -59,6 +65,7 @@ L.Icon.Default.mergeOptions({
 
 const TOOLS: { key: ToolType; icon: React.ReactNode; color?: string }[] = [
   { key: 'select', icon: <IconCursorText size={18} /> },
+  { key: 'move', icon: <IconArrowsMove size={18} />, color: 'blue' },
   { key: 'zone', icon: <IconPolygon size={18} />, color: 'green' },
   { key: 'path', icon: <IconRoute size={18} />, color: 'blue' },
   { key: 'waypoint', icon: <IconMapPin size={18} />, color: 'grape' },
@@ -69,6 +76,7 @@ const TOOLS: { key: ToolType; icon: React.ReactNode; color?: string }[] = [
 
 const OBJECT_TYPE_ICONS: Record<ToolType, React.ReactNode> = {
   select: <IconCursorText size={14} />,
+  move: <IconArrowsMove size={14} />,
   zone: <IconPolygon size={14} />,
   path: <IconRoute size={14} />,
   waypoint: <IconMapPin size={14} />,
@@ -85,15 +93,23 @@ function MapEventHandler({
   activeTool,
   editMode,
   onAddPoint,
+  isCalibStep2,
+  onCalibMapPoint,
 }: {
   activeTool: ToolType
   editMode: boolean
   onAddPoint: (pos: L.LatLngTuple) => void
+  isCalibStep2: boolean
+  onCalibMapPoint: (pos: L.LatLngTuple) => void
 }) {
   useMapEvents({
     click(e) {
+      if (isCalibStep2) {
+        onCalibMapPoint([e.latlng.lat, e.latlng.lng])
+        return
+      }
       if (!editMode) return
-      if (activeTool !== 'select' && activeTool !== 'delete') {
+      if (activeTool !== 'select' && activeTool !== 'delete' && activeTool !== 'move') {
         onAddPoint([e.latlng.lat, e.latlng.lng])
       }
     },
@@ -118,6 +134,9 @@ export function MapEditor() {
   const [editMode, setEditMode] = useState(true)
   const [showDimensions, setShowDimensions] = useState(false)
   const [showAnchors, setShowAnchors] = useState(true)
+  const [presetRectEnabled, setPresetRectEnabled] = useState(false)
+  const [presetRectW, setPresetRectW] = useState<number | string>(2)
+  const [presetRectH, setPresetRectH] = useState<number | string>(1)
   const [fitBounds, setFitBounds] = useState<L.LatLngBoundsExpression | null>(null)
   const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null)
   const [roomWidth, setRoomWidth] = useState<number | string>(10)
@@ -126,6 +145,14 @@ export function MapEditor() {
   const [bedY, setBedY] = useState<number | string>(1)
   const [bedWidth, setBedWidth] = useState<number | string>(2)
   const [bedHeight, setBedHeight] = useState<number | string>(1)
+  type CalibState = {
+    imageFeatureId: string
+    step: 1 | 2
+    imagePoints: [number, number][]
+    mapPoints: L.LatLngTuple[]
+  }
+  const [calibState, setCalibState] = useState<CalibState | null>(null)
+
   const idRef = useRef(0)
   const mapRef = useRef<L.Map | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -190,15 +217,37 @@ export function MapEditor() {
     (pos: L.LatLngTuple) => {
       if (activeTool === 'waypoint' || activeTool === 'qr') {
         setFeatures((prev) => [...prev, { id: String(++idRef.current), type: activeTool, positions: [pos] }])
+      } else if (activeTool === 'zone' && presetRectEnabled) {
+        const w = Number(presetRectW) || 1
+        const h = Number(presetRectH) || 1
+        const positions: L.LatLngTuple[] = [
+          [pos[0] - h / 2, pos[1] - w / 2],
+          [pos[0] - h / 2, pos[1] + w / 2],
+          [pos[0] + h / 2, pos[1] + w / 2],
+          [pos[0] + h / 2, pos[1] - w / 2],
+        ]
+        setFeatures((prev) => [...prev, { id: String(++idRef.current), type: 'zone', positions }])
       } else {
         setCurrentPoints((prev) => [...prev, pos])
       }
     },
-    [activeTool],
+    [activeTool, presetRectEnabled, presetRectW, presetRectH],
   )
 
   const commitShape = () => {
-    if (currentPoints.length < 1) return
+    const minPoints: Record<ToolType, number> = {
+      zone: 3, path: 2, base: 3,
+      select: 1, delete: 1, waypoint: 1, qr: 1, image: 1, move: 1,
+    }
+    const min = minPoints[activeTool] ?? 1
+    if (currentPoints.length < min) {
+      notifications.show({
+        title: t('map.tooFewPoints', { min }),
+        message: t('map.tooFewPointsHint', { min }),
+        color: 'orange',
+      })
+      return
+    }
     setFeatures((prev) => [...prev, { id: String(++idRef.current), type: activeTool, positions: currentPoints }])
     setCurrentPoints([])
   }
@@ -236,6 +285,59 @@ export function MapEditor() {
   const handleSelectFeature = useCallback((featureId: string) => {
     setSelectedFeatureId((prev) => (prev === featureId ? null : featureId))
   }, [])
+
+  const handleDeleteVertex = useCallback((featureId: string, index: number) => {
+    setFeatures((prev) =>
+      prev.map((f) => {
+        if (f.id !== featureId) return f
+        const positions = f.positions.filter((_, i) => i !== index)
+        return { ...f, positions }
+      }),
+    )
+  }, [])
+
+  const handleMoveFeature = useCallback((featureId: string, delta: L.LatLngTuple) => {
+    setFeatures((prev) =>
+      prev.map((f) =>
+        f.id !== featureId
+          ? f
+          : { ...f, positions: f.positions.map(([lat, lng]) => [lat + delta[0], lng + delta[1]] as L.LatLngTuple) },
+      ),
+    )
+  }, [])
+
+  const handleStartCalib = useCallback((featureId: string) => {
+    const f = features.find((ft) => ft.id === featureId)
+    if (!f?.imageUrl) return
+    setCalibState({ imageFeatureId: featureId, step: 1, imagePoints: [], mapPoints: [] })
+  }, [features])
+
+  const handleCalibImagePoint = useCallback((frac: [number, number]) => {
+    setCalibState((prev) => {
+      if (!prev || prev.step !== 1) return prev
+      const pts = [...prev.imagePoints, frac]
+      return pts.length >= 2 ? { ...prev, step: 2, imagePoints: pts } : { ...prev, imagePoints: pts }
+    })
+  }, [])
+
+  const handleCalibMapPoint = useCallback((pos: L.LatLngTuple) => {
+    setCalibState((prev) => {
+      if (!prev || prev.step !== 2) return prev
+      return { ...prev, mapPoints: [...prev.mapPoints, pos] }
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!calibState || calibState.step !== 2 || calibState.mapPoints.length < 2) return
+    const result = applyImageCalibration(calibState.imagePoints, calibState.mapPoints)
+    if (result) {
+      const [sw, ne] = result
+      setFeatures((prev) => prev.map((f) => (f.id === calibState.imageFeatureId ? { ...f, positions: [sw, ne] } : f)))
+    } else {
+      notifications.show({ title: t('map.calibError'), message: '', color: 'orange' })
+    }
+    setCalibState(null)
+  }, [calibState])
 
   const handleFocusFeature = useCallback((f: MapFeature) => {
     setSelectedFeatureId(f.id)
@@ -282,8 +384,9 @@ export function MapEditor() {
         ...prev,
         { id: String(++idRef.current), type: 'image', positions, imageKey: key, imageUrl: url, label: file.name },
       ])
-    } catch {
-      notifications.show({ title: t('map.imageUploadError'), message: '', color: 'red' })
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      notifications.show({ title: t('map.imageUploadError'), message: detail, color: 'red' })
     }
   }
 
@@ -409,7 +512,7 @@ export function MapEditor() {
               {t('map.commitShape', { count: currentPoints.length })}
             </Button>
           )}
-          <input ref={imageInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageFileChange} />
+          <input ref={imageInputRef} type="file" accept="image/*,application/pdf" style={{ display: 'none' }} onChange={handleImageFileChange} />
           <Tooltip label={t('map.uploadPlan')}>
             <ActionIcon variant="light" color="gray" size="lg" onClick={() => imageInputRef.current?.click()}>
               <IconPhotoPlus size={18} />
@@ -467,6 +570,48 @@ export function MapEditor() {
         </Group>
       </Paper>
 
+      {activeTool === 'zone' && (
+        <Paper withBorder p="xs">
+          <Group gap="xs" align="flex-end">
+            <Tooltip label={t('map.presetRectToggle')}>
+              <ActionIcon
+                variant={presetRectEnabled ? 'filled' : 'light'}
+                color="green"
+                size="lg"
+                onClick={() => setPresetRectEnabled((v) => !v)}
+              >
+                <IconRectangle size={18} />
+              </ActionIcon>
+            </Tooltip>
+            {presetRectEnabled && (
+              <>
+                <NumberInput
+                  label={t('map.presetRectW')}
+                  value={presetRectW}
+                  onChange={setPresetRectW}
+                  min={0.1}
+                  step={0.5}
+                  w={120}
+                  size="xs"
+                />
+                <NumberInput
+                  label={t('map.presetRectH')}
+                  value={presetRectH}
+                  onChange={setPresetRectH}
+                  min={0.1}
+                  step={0.5}
+                  w={120}
+                  size="xs"
+                />
+                <Text size="xs" c="dimmed" style={{ alignSelf: 'center', marginBottom: 2 }}>
+                  {t('map.presetRectHint')}
+                </Text>
+              </>
+            )}
+          </Group>
+        </Paper>
+      )}
+
       {mapMode === 'relative' && (
         <Paper withBorder p="xs">
           <Group gap="md" wrap="wrap">
@@ -490,6 +635,16 @@ export function MapEditor() {
         </Paper>
       )}
 
+      {calibState?.step === 2 && (
+        <Text size="sm" ta="center" style={{ background: '#e7f5ff', color: '#1971c2', padding: '4px 12px', borderRadius: 4 }}>
+          {calibState.mapPoints.length === 0 ? t('map.calibClickMap1') : t('map.calibClickMap2')}
+          {' · '}
+          <span style={{ cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setCalibState(null)}>
+            {t('common.cancel')}
+          </span>
+        </Text>
+      )}
+
       <Group gap="sm" wrap="nowrap" align="stretch" style={{ flex: 1, minHeight: 500 }}>
         <MapContainer
           key={mapMode}
@@ -499,11 +654,34 @@ export function MapEditor() {
           minZoom={mapMode === 'geo' ? 0 : -2}
           maxZoom={mapMode === 'geo' ? 21 : 8}
           crs={mapMode === 'geo' ? L.CRS.EPSG3857 : L.CRS.Simple}
-          style={{ flex: 1, minHeight: 500, borderRadius: 8 }}
+          attributionControl={false}
+          style={{ flex: 1, minHeight: 500, borderRadius: 8, cursor: calibState?.step === 2 ? 'crosshair' : undefined }}
         >
           {mapMode === 'geo' ? <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={21} maxNativeZoom={19} /> : <MeterGrid />}
-          <MapEventHandler activeTool={activeTool} editMode={editMode} onAddPoint={handleAddPoint} />
+          <MapEventHandler
+            activeTool={activeTool}
+            editMode={editMode}
+            onAddPoint={handleAddPoint}
+            isCalibStep2={calibState?.step === 2}
+            onCalibMapPoint={handleCalibMapPoint}
+          />
           <FitBounds bounds={fitBounds} />
+
+          {/* Calibration reference markers (step 2) */}
+          {calibState?.step === 2 && calibState.mapPoints.map((pos, i) => (
+            <Marker key={`calib-${i}`} position={pos} icon={calibPointIcon((i + 1) as 1 | 2)} interactive={false} />
+          ))}
+          {calibState?.step === 2 && calibState.mapPoints.length === 2 && (() => {
+            const [m1, m2] = calibState.mapPoints
+            const mid: L.LatLngTuple = [(m1[0] + m2[0]) / 2, (m1[1] + m2[1]) / 2]
+            const dist = mapMode === 'geo' ? L.latLng(m1).distanceTo(L.latLng(m2)) : Math.hypot(m1[0] - m2[0], m1[1] - m2[1])
+            return (
+              <>
+                <Polyline positions={calibState.mapPoints} pathOptions={{ color: '#f03e3e', weight: 2, dashArray: '4 4' }} interactive={false} />
+                <Marker position={mid} icon={dimensionLabel(`${dist.toFixed(2)} м`)} interactive={false} />
+              </>
+            )
+          })()}
 
           <FeatureLayers
             features={features}
@@ -517,6 +695,9 @@ export function MapEditor() {
             onVertexDrag={handleVertexDrag}
             onInsertVertex={handleInsertVertex}
             onDeleteFeature={handleDeleteFeature}
+            onDeleteVertex={handleDeleteVertex}
+            onMoveFeature={handleMoveFeature}
+            onSelectFeature={handleSelectFeature}
           />
         </MapContainer>
 
@@ -566,6 +747,21 @@ export function MapEditor() {
                       <IconCrosshair size={14} />
                     </ActionIcon>
                   </Tooltip>
+                  {f.type === 'image' && (
+                    <Tooltip label={t('map.calibrate')}>
+                      <ActionIcon
+                        size="sm"
+                        variant="subtle"
+                        color="teal"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleStartCalib(f.id)
+                        }}
+                      >
+                        <IconRuler2 size={14} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
                   <Tooltip label={t('common.delete')}>
                     <ActionIcon
                       size="sm"
@@ -585,6 +781,18 @@ export function MapEditor() {
           </ScrollArea>
         </Paper>
       </Group>
+
+      {calibState?.step === 1 && (() => {
+        const imgUrl = features.find((f) => f.id === calibState.imageFeatureId)?.imageUrl
+        return imgUrl ? (
+          <ImageCalibModal
+            imageUrl={imgUrl}
+            points={calibState.imagePoints}
+            onPointAdd={handleCalibImagePoint}
+            onClose={() => setCalibState(null)}
+          />
+        ) : null
+      })()}
 
       <Modal opened={saveModalOpened} onClose={closeSaveModal} title={t('map.saveAsTemplate')}>
         <form onSubmit={saveForm.onSubmit((values) => createMutation.mutate(values))}>

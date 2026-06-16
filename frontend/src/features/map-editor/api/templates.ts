@@ -53,7 +53,10 @@ export async function getLayout(id: string): Promise<MapGeoJSON> {
 export async function uploadImage(file: File): Promise<string> {
   const form = new FormData()
   form.append('file', file)
-  const { data } = await api.post<{ key: string }>('/maps/images', form)
+  // Unset the axios default Content-Type so the browser sets multipart/form-data with the correct boundary
+  const { data } = await api.post<{ key: string }>('/maps/images', form, {
+    headers: { 'Content-Type': undefined },
+  })
   return data.key
 }
 

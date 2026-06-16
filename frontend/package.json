@@ -9,11 +9,11 @@
     "lint": "eslint src --ext ts,tsx"
   },
   "dependencies": {
+    "@mantine/charts": "^7.14.2",
     "@mantine/core": "^7.14.2",
     "@mantine/form": "^7.14.2",
     "@mantine/hooks": "^7.14.2",
     "@mantine/notifications": "^7.14.2",
-    "@mantine/charts": "^7.14.2",
     "@tabler/icons-react": "^3.26.0",
     "@tanstack/react-query": "^5.62.8",
     "@tanstack/react-query-devtools": "^5.62.8",

@@ -1,6 +1,6 @@
 import type L from 'leaflet'
 
-export type ToolType = 'select' | 'zone' | 'path' | 'waypoint' | 'base' | 'qr' | 'delete' | 'image'
+export type ToolType = 'select' | 'zone' | 'path' | 'waypoint' | 'base' | 'qr' | 'delete' | 'image' | 'move'
 
 export type MapMode = 'geo' | 'relative'
 
@@ -25,4 +25,5 @@ export const FEATURE_COLORS: Record<ToolType, string> = {
   select: '#868e96',
   delete: '#fa5252',
   image: '#495057',
+  move: '#1971c2',
 }
