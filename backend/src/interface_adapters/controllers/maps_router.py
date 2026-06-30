@@ -6,8 +6,10 @@ from src.domain.entities.map_data import MapMeta
 from src.domain.entities.user import UserRole
 from src.frameworks.db.repositories.map_repo import SqlMapRepository
 from src.frameworks.db.session import get_db
+from src.frameworks.ros.rosbridge_client import get_rosbridge_client
 from src.frameworks.security.rbac import current_user, require_role
 from src.frameworks.storage.minio_client import get_minio_client
+from src.use_cases.maps.map_publisher import MapPublisher
 from src.use_cases.maps.map_service import CreateTemplateInput, MapService, UploadMapInput
 
 router = APIRouter()
@@ -186,6 +188,28 @@ async def get_download_url(
         return {"url": url}
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{map_id}/publish")
+async def publish_map_to_robot(
+    map_id: str,
+    _payload: dict = Depends(require_role(UserRole.OPERATOR, UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    service = MapService(SqlMapRepository(db), get_minio_client())
+    meta = await service.get_by_id(map_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Карта не найдена")
+
+    publisher = MapPublisher(get_minio_client(), get_rosbridge_client())
+    try:
+        await publisher.publish(meta)
+    except ConnectionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {"status": "published", "topic": "/map", "map_id": map_id}
 
 
 @router.delete("/{map_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -145,6 +145,9 @@ class MapService:
         content_type = mimetypes.guess_type(image_id)[0] or "application/octet-stream"
         return data, content_type
 
+    async def get_by_id(self, map_id: str) -> MapMeta | None:
+        return await self._repo.get_by_id(uuid.UUID(map_id))
+
     async def get_all(self, map_type: str | None = None) -> list[MapMeta]:
         return await self._repo.list_all(map_type)
 

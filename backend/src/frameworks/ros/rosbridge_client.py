@@ -62,6 +62,12 @@ class RosBridgeClient:
         if self._ws:
             await self._ws.close()
 
+    async def advertise(self, topic: str, msg_type: str, latch: bool = False) -> None:
+        if not self._ws:
+            raise ConnectionError("Нет соединения с rosbridge")
+        frame = {"op": "advertise", "topic": topic, "type": msg_type, "latch": latch}
+        await self._ws.send(json.dumps(frame))
+
     async def publish(self, topic: str, message: dict) -> None:
         if not self._ws:
             raise ConnectionError("Нет соединения с rosbridge")
