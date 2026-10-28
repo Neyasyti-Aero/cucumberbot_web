@@ -52,11 +52,11 @@ git.neyasyti.ru                              сервер 4V100 (77.50.187.110 �
 
 ## 0. Репозиторий в GitLab
 
-Сейчас `origin` указывает на GitHub, а runner работает с `git.neyasyti.ru`. Создайте проект
-`neyasyti-aero/cucumberbot_web` в GitLab и запушьте в него код:
+`origin` указывает на GitHub, а runner работает с `git.neyasyti.ru`. Код зеркалируется во второй
+remote — проект `neyasyti-aero/cucumberbot-web-panel` уже создан в GitLab:
 
 ```bash
-git remote add gitlab https://git.neyasyti.ru/neyasyti-aero/cucumberbot_web.git
+git remote add gitlab https://git.neyasyti.ru/neyasyti-aero/cucumberbot-web-panel.git
 git push gitlab main
 ```
 
@@ -75,7 +75,7 @@ GitHub можно оставить зеркалом или убрать. В ре
 
 На сервере уже работает runner сайта с тегом `neyasiti-deploy`. Его достаточно включить для нового проекта:
 
-**cucumberbot_web → Settings → CI/CD → Runners → Project runners → Enable** у runner'а `neyasiti-deploy`
+**cucumberbot-web-panel → Settings → CI/CD → Runners → Project runners → Enable** у runner'а `neyasiti-deploy`
 (нужна роль Maintainer в обоих проектах).
 
 Если отдельный runner удобнее, зарегистрируйте его по `website/deploy/README.md` (шаг 2) с тем же
