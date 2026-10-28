@@ -39,6 +39,8 @@ import {
   IconArrowsMove,
   IconRectangle,
   IconRuler2,
+  IconRobot,
+  IconPrinter,
 } from '@tabler/icons-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { MapContainer, Marker, Polyline, TileLayer, useMap, useMapEvents } from 'react-leaflet'
@@ -50,7 +52,17 @@ import { FEATURE_COLORS } from '../model/types'
 import { FeatureLayers } from './FeatureLayers'
 import { MeterGrid } from './MeterGrid'
 import { featuresToGeoJSON, geoJSONToFeatures } from '../lib/geojson'
-import { createTemplate, getImageBlobUrl, getLayout, updateLayout, uploadImage } from '../api/templates'
+import { apiErrorMessage } from '@shared/api/base'
+import {
+  createTemplate,
+  downloadNav2Map,
+  generateQrSheet,
+  getImageBlobUrl,
+  getLayout,
+  updateLayout,
+  uploadImage,
+  validateNav2Map,
+} from '../api/templates'
 import { useMapTemplates } from '../model/useMapTemplates'
 import { applyImageCalibration } from '../lib/calibration'
 import { calibPointIcon, dimensionLabel } from '../lib/icons'
@@ -447,6 +459,34 @@ export function MapEditor() {
     onError: () => notifications.show({ title: t('map.layoutSaveError'), message: '', color: 'red' }),
   })
 
+  // Экспорт и QR работают с сохранённой версией карты на сервере
+  const nav2Mutation = useMutation({
+    mutationFn: async (id: string) => {
+      const report = await validateNav2Map(id)
+      if (!report.valid) throw new Error(report.errors.join('; '))
+      await downloadNav2Map(id)
+      return report
+    },
+    onSuccess: (report) =>
+      notifications.show({
+        title: t('map.nav2Ready', { width: report.width, height: report.height, resolution: report.resolution }),
+        message: report.warnings.join('; '),
+        color: report.warnings.length ? 'orange' : 'green',
+      }),
+    onError: (err) => notifications.show({ title: t('map.nav2Error'), message: apiErrorMessage(err), color: 'red' }),
+  })
+
+  const qrMutation = useMutation({
+    mutationFn: (id: string) => generateQrSheet(id),
+    onSuccess: (count) =>
+      notifications.show(
+        count > 0
+          ? { title: t('map.qrSheetReady', { count }), message: t('map.qrPrintHint'), color: 'green' }
+          : { title: t('map.qrNone'), message: '', color: 'orange' },
+      ),
+    onError: (err) => notifications.show({ title: t('map.qrError'), message: apiErrorMessage(err), color: 'red' }),
+  })
+
   const createMutation = useMutation({
     mutationFn: (values: { name: string; description: string }) =>
       createTemplate({
@@ -531,6 +571,32 @@ export function MapEditor() {
           <Button size="xs" variant="light" color="teal" onClick={exportGeoJSON}>
             {t('map.export')}
           </Button>
+          <Tooltip label={t('map.nav2ExportHint')}>
+            <Button
+              size="xs"
+              variant="light"
+              color="grape"
+              leftSection={<IconRobot size={14} />}
+              disabled={!selectedTemplateId}
+              loading={nav2Mutation.isPending}
+              onClick={() => selectedTemplateId && nav2Mutation.mutate(selectedTemplateId)}
+            >
+              {t('map.nav2Export')}
+            </Button>
+          </Tooltip>
+          <Tooltip label={t('map.qrSheetHint')}>
+            <Button
+              size="xs"
+              variant="light"
+              color="teal"
+              leftSection={<IconPrinter size={14} />}
+              disabled={!selectedTemplateId}
+              loading={qrMutation.isPending}
+              onClick={() => selectedTemplateId && qrMutation.mutate(selectedTemplateId)}
+            >
+              {t('map.qrSheet')}
+            </Button>
+          </Tooltip>
         </Group>
       </Group>
 

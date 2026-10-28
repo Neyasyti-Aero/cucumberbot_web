@@ -2,10 +2,8 @@ import uuid
 from dataclasses import dataclass
 
 from src.domain.entities.robot_command import CommandType, RobotCommand
-from src.domain.repositories.user_repository import AbstractUserRepository
 from src.frameworks.db.repositories.command_log_repo import AbstractCommandLogRepository
 from src.frameworks.ros.rosbridge_client import RosBridgeClient
-
 
 COMMAND_ROS_MAP: dict[CommandType, str] = {
     CommandType.PATROL: "/cucumberbot/patrol",

@@ -30,3 +30,13 @@ class Telemetry:
     battery_percent: float
     task_status: str
     timestamp: float
+
+
+@dataclass
+class RobotPose:
+    x: float
+    y: float
+    theta: float  # yaw, рад
+    frame_id: str  # "map" — локализация (AMCL), "odom" — одометрия без привязки к карте
+    source: str  # amcl | odom | simulation
+    timestamp: float

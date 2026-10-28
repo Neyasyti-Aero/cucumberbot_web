@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from src.domain.entities.map_data import MapMeta
 from src.domain.repositories.map_repository import AbstractMapRepository
 from src.frameworks.storage.minio_client import MinioClient
+from src.use_cases.maps.nav2_map import MapYaml, parse_map_yaml, pgm_to_grid
 
 
 @dataclass
@@ -42,12 +43,30 @@ class MapService:
         map_id = uuid.uuid4()
         file_key = None
         geojson_key = None
+        resolution = data.resolution
+
+        if data.yaml_data and not data.pgm_data:
+            raise ValueError("map.yaml загружается только вместе с map.pgm")
 
         if data.pgm_data:
+            # Проверяем, что пара pgm+yaml загрузится в nav2_map_server, до сохранения
+            map_yaml = parse_map_yaml(data.yaml_data) if data.yaml_data else None
+            if map_yaml is None and not resolution:
+                raise ValueError("Для PGM без map.yaml нужно указать resolution")
+            if map_yaml is not None:
+                resolution = map_yaml.resolution
+            pgm_to_grid(data.pgm_data, map_yaml or MapYaml(resolution=resolution))
+
             file_key = f"maps/{map_id}/map.pgm"
             await self._storage.upload(
                 bucket="maps", key=file_key, data=data.pgm_data, content_type="image/x-portable-graymap"
             )
+            if map_yaml is not None:
+                map_yaml.image = "map.pgm"
+                await self._storage.upload(
+                    bucket="maps", key=f"maps/{map_id}/map.yaml",
+                    data=map_yaml.dump().encode("utf-8"), content_type="application/x-yaml",
+                )
 
         if data.geojson_data:
             geojson_key = f"maps/{map_id}/layout.geojson"
@@ -65,7 +84,7 @@ class MapService:
             geojson_key=geojson_key,
             width_meters=data.width_meters,
             height_meters=data.height_meters,
-            resolution=data.resolution,
+            resolution=resolution,
         )
         return await self._repo.create(meta)
 
@@ -163,6 +182,7 @@ class MapService:
             raise ValueError("Карта не найдена")
         if meta.file_key:
             await self._storage.delete("maps", meta.file_key)
+            await self._storage.delete("maps", f"maps/{meta.id}/map.yaml")
         if meta.geojson_key:
             await self._storage.delete("maps", meta.geojson_key)
         await self._repo.delete(uuid.UUID(map_id))

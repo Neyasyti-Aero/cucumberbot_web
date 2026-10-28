@@ -1,3 +1,4 @@
+import asyncio
 import io
 
 import boto3
@@ -26,8 +27,11 @@ class MinioClient:
             except ClientError:
                 self._s3.create_bucket(Bucket=bucket)
 
+    # boto3 синхронный — уводим вызовы в поток, чтобы не блокировать event loop
+
     async def upload(self, bucket: str, key: str, data: bytes, content_type: str = "application/octet-stream") -> None:
-        self._s3.upload_fileobj(
+        await asyncio.to_thread(
+            self._s3.upload_fileobj,
             io.BytesIO(data),
             bucket,
             key,
@@ -36,11 +40,16 @@ class MinioClient:
 
     async def download(self, bucket: str, key: str) -> bytes:
         buf = io.BytesIO()
-        self._s3.download_fileobj(bucket, key, buf)
+        try:
+            await asyncio.to_thread(self._s3.download_fileobj, bucket, key, buf)
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
+                raise FileNotFoundError(f"{bucket}/{key}") from exc
+            raise
         return buf.getvalue()
 
     async def delete(self, bucket: str, key: str) -> None:
-        self._s3.delete_object(Bucket=bucket, Key=key)
+        await asyncio.to_thread(self._s3.delete_object, Bucket=bucket, Key=key)
 
     async def presigned_url(self, bucket: str, key: str, expires: int = 3600) -> str:
         return self._s3.generate_presigned_url(

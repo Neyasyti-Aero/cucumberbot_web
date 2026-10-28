@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,7 +9,7 @@ from src.frameworks.db.session import get_db
 from src.frameworks.ros.rosbridge_client import get_rosbridge_client
 from src.frameworks.security.rbac import current_user, require_role
 from src.frameworks.storage.minio_client import get_minio_client
-from src.use_cases.maps.map_publisher import MapPublisher
+from src.use_cases.maps.map_publisher import MAP_TOPIC, MapPublisher
 from src.use_cases.maps.map_service import CreateTemplateInput, MapService, UploadMapInput
 
 router = APIRouter()
@@ -72,6 +72,7 @@ async def upload_map(
     name: str = Form(...),
     description: str = Form(""),
     pgm_file: UploadFile | None = File(None),
+    yaml_file: UploadFile | None = File(None),
     geojson_file: UploadFile | None = File(None),
     width_meters: float | None = Form(None),
     height_meters: float | None = Form(None),
@@ -80,18 +81,22 @@ async def upload_map(
     db: AsyncSession = Depends(get_db),
 ):
     service = MapService(SqlMapRepository(db), get_minio_client())
-    meta = await service.upload(
-        UploadMapInput(
-            name=name,
-            description=description,
-            user_id=payload["sub"],
-            pgm_data=await pgm_file.read() if pgm_file else None,
-            geojson_data=await geojson_file.read() if geojson_file else None,
-            width_meters=width_meters,
-            height_meters=height_meters,
-            resolution=resolution,
+    try:
+        meta = await service.upload(
+            UploadMapInput(
+                name=name,
+                description=description,
+                user_id=payload["sub"],
+                pgm_data=await pgm_file.read() if pgm_file else None,
+                yaml_data=await yaml_file.read() if yaml_file else None,
+                geojson_data=await geojson_file.read() if geojson_file else None,
+                width_meters=width_meters,
+                height_meters=height_meters,
+                resolution=resolution,
+            )
         )
-    )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _to_response(meta)
 
 
@@ -190,26 +195,69 @@ async def get_download_url(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+async def _get_meta(map_id: str, db: AsyncSession) -> MapMeta:
+    meta = await MapService(SqlMapRepository(db), get_minio_client()).get_by_id(map_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Карта не найдена")
+    return meta
+
+
+# resolution применяется только к картам из редактора; у загруженных PGM он берётся из map.yaml
+_RESOLUTION = Query(None, gt=0.005, le=1.0, description="м/пиксель для растеризации разметки")
+
+
+@router.get("/{map_id}/nav2/validate")
+async def validate_nav2_map(
+    map_id: str,
+    resolution: float | None = _RESOLUTION,
+    _payload: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Проверка, что карта загрузится в nav2_map_server: размеры, origin, доля свободных/занятых ячеек."""
+    meta = await _get_meta(map_id, db)
+    try:
+        return await MapPublisher(get_minio_client()).validate(meta, resolution)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/{map_id}/nav2.zip")
+async def export_nav2_map(
+    map_id: str,
+    resolution: float | None = _RESOLUTION,
+    _payload: dict = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """map.pgm + map.yaml для nav2_map_server."""
+    meta = await _get_meta(map_id, db)
+    try:
+        data = await MapPublisher(get_minio_client()).export_zip(meta, resolution)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="map_{map_id}.zip"'},
+    )
+
+
 @router.post("/{map_id}/publish")
 async def publish_map_to_robot(
     map_id: str,
+    resolution: float | None = _RESOLUTION,
     _payload: dict = Depends(require_role(UserRole.OPERATOR, UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
-    service = MapService(SqlMapRepository(db), get_minio_client())
-    meta = await service.get_by_id(map_id)
-    if not meta:
-        raise HTTPException(status_code=404, detail="Карта не найдена")
-
+    meta = await _get_meta(map_id, db)
     publisher = MapPublisher(get_minio_client(), get_rosbridge_client())
     try:
-        await publisher.publish(meta)
+        report = await publisher.publish(meta, resolution)
     except ConnectionError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {"status": "published", "topic": "/map", "map_id": map_id}
+    return {"status": "published", "topic": MAP_TOPIC, "map_id": map_id, "report": report}
 
 
 @router.delete("/{map_id}", status_code=status.HTTP_204_NO_CONTENT)

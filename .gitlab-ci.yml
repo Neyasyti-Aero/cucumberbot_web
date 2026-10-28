@@ -1,0 +1,136 @@
+# CucumberBot Web — CI/CD по той же схеме, что у сайта (neyasiti-aero/website):
+# shell-runner на сервере, образы собираются локальным docker'ом, без Registry, dind и SSH.
+# Домен: https://cutecumber.neyasyti.ru (Caddy → cucumberbot-web:80 по сети caddy_net).
+# Инструкция по настройке: deploy/README.md
+#
+#   check   — линт и юнит-тесты (внутри docker build --target test), сборка фронтенда (tsc + vite)
+#   build   — боевые образы backend/frontend с тегом коммита, образ ROS 2 для тестов
+#   system  — изолированный стек + ROS 2 Humble: API, QR, карта в nav2_map_server, /map и /amcl_pose через rosbridge
+#   deploy  — выкатка на сервер (только main)
+#   verify  — проверка боевого стека после выкатки
+#
+# CI/CD Variables:
+#   CUCUMBERBOT_ENV — тип File, содержимое по шаблону docker/.env.example (секреты прода)
+
+stages:
+  - check
+  - build
+  - system
+  - deploy
+  - verify
+
+variables:
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  ROS_IMAGE_TAG: ci
+  TEST_IMAGE: cucumberbot-backend-test:$CI_COMMIT_SHORT_SHA
+  PROD_PROJECT: cucumberbot
+  PROD_DOMAIN: cutecumber.neyasyti.ru
+  COMPOSE_PROD: docker compose -p cucumberbot -f docker/docker-compose.yml -f docker/docker-compose.server.yml
+  DOCKER_BUILDKIT: "1"
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+default:
+  tags: [neyasiti-deploy]
+
+# ---------- check ----------
+
+check:backend:
+  stage: check
+  script:
+    # ruff + pytest выполняются в RUN стадии test — сборка упадёт, если они не прошли
+    - docker build --target test -t "$TEST_IMAGE" backend
+
+check:frontend:
+  stage: check
+  script:
+    - docker build --target builder frontend
+
+# ---------- build ----------
+
+build:images:
+  stage: build
+  script:
+    - docker build --target runtime -t "cucumberbot-backend:$IMAGE_TAG" backend
+    - docker build -t "cucumberbot-frontend:$IMAGE_TAG" frontend
+    - docker build -t "cucumberbot-ros2:$ROS_IMAGE_TAG" docker/ros2
+
+# ---------- system ----------
+
+system:tests:
+  stage: system
+  variables:
+    CI_STACK: cucumberbot-ci-$CI_PIPELINE_ID
+  script:
+    - export COMPOSE="docker compose -p $CI_STACK -f docker/docker-compose.yml -f docker/docker-compose.ci.yml"
+    - mkdir -p ci-artifacts
+    - $COMPOSE up -d --no-build --wait --wait-timeout 240
+    # миграции обратимы: откат до нуля и повторное применение на чистой БД
+    - $COMPOSE exec -T backend sh -c "alembic downgrade base && alembic upgrade head"
+    - >
+      docker run --rm --network "${CI_STACK}_internal"
+      --user "$(id -u):$(id -g)"
+      -e SYSTEM_BASE_URL=http://frontend
+      -e SYSTEM_ROSBRIDGE_URL=ws://rosbridge:9090
+      -e SYSTEM_ARTIFACTS_DIR=/artifacts
+      -v "$CI_PROJECT_DIR/ci-artifacts:/artifacts"
+      "$TEST_IMAGE"
+      pytest tests/system -v -p no:cacheprovider --junitxml=/artifacts/system-tests.xml
+    # карта, экспортированная из веба, грузится штатным nav2_map_server
+    - $COMPOSE cp ci-artifacts/map.zip rosbridge:/tmp/map.zip
+    - $COMPOSE exec -T rosbridge check_nav2_map.sh /tmp/map.zip
+  after_script:
+    - mkdir -p ci-artifacts
+    - docker compose -p "cucumberbot-ci-$CI_PIPELINE_ID" -f docker/docker-compose.yml -f docker/docker-compose.ci.yml logs --tail=200 backend > ci-artifacts/backend.log 2>&1 || true
+    - docker compose -p "cucumberbot-ci-$CI_PIPELINE_ID" -f docker/docker-compose.yml -f docker/docker-compose.ci.yml down -v --remove-orphans || true
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths: [ci-artifacts/]
+    reports:
+      junit: ci-artifacts/system-tests.xml
+
+# ---------- deploy ----------
+
+deploy:production:
+  stage: deploy
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  environment:
+    name: production
+    url: https://$PROD_DOMAIN
+  resource_group: production
+  script:
+    - test -n "$CUCUMBERBOT_ENV" || { echo "Не задана CI/CD-переменная CUCUMBERBOT_ENV (тип File)"; exit 1; }
+    # --wait: job упадёт, если какой-то сервис не станет healthy (backend — после миграций)
+    - $COMPOSE_PROD --env-file "$CUCUMBERBOT_ENV" up -d --no-build --remove-orphans --wait --wait-timeout 240
+    # Оставляем 5 последних версий для отката; без docker image prune — сервер общий
+    - |
+      for repo in cucumberbot-backend cucumberbot-frontend cucumberbot-backend-test; do
+        docker images "$repo" --format '{{.Tag}}' | grep -vE '^(latest|local)$' | tail -n +6 \
+          | xargs -r -I{} docker rmi "$repo:{}" || true
+      done
+
+# ---------- verify ----------
+
+verify:internal:
+  stage: verify
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    # путь Caddy → frontend(nginx) → backend внутри сети caddy_net
+    - docker exec caddy wget -qO- http://cucumberbot-web/ | grep -q '<div id="root">'
+    - docker exec caddy wget -qO- http://cucumberbot-web/api/v1/health | tee /dev/stderr | grep -q '"status":"ok"'
+
+verify:public:
+  stage: verify
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  # до настройки DNS и блока в Caddy (deploy/README.md, шаги 1 и 5) эта проверка будет падать
+  allow_failure: true
+  script:
+    - curl -fsS --max-time 15 "https://$PROD_DOMAIN/api/v1/health"
+    - curl -fsS --max-time 15 -o /dev/null -w "frontend %{http_code}\n" "https://$PROD_DOMAIN/"

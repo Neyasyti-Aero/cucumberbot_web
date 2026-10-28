@@ -1,5 +1,9 @@
 name: cucumberbot
 
+# Базовый стек = локальная разработка (порты наружу, дефолтные пароли).
+# Сервер:  + docker-compose.server.yml  (за Caddy, без открытых портов, обязательные секреты)
+# CI:      + docker-compose.ci.yml      (изолированный стек + ROS 2 для системных тестов)
+
 services:
   db:
     image: postgres:16-alpine
@@ -19,18 +23,20 @@ services:
       - internal
 
   minio:
-    image: minio/minio:latest
+    # Официальные образы minio/minio больше не публикуются (Docker Hub/Quay отдают 401/404).
+    # bitnamilegacy — замороженная сборка с тем же S3 API; версия зафиксирована.
+    image: bitnamilegacy/minio:2025.7.23
     restart: unless-stopped
-    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_DEFAULT_BUCKETS: maps,logs
     volumes:
-      - minio_data:/data
+      - minio_data:/bitnami/minio/data
     ports:
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,9 +44,10 @@ services:
       - internal
 
   backend:
+    image: cucumberbot-backend:${IMAGE_TAG:-local}
     build:
       context: ../backend
-      dockerfile: Dockerfile
+      target: runtime
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:-postgres}@db:5432/cucumberbot
@@ -50,9 +57,13 @@ services:
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      DEFAULT_ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@cucumberbot.local}
+      DEFAULT_ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@cucumberbot.io}
       DEFAULT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin1234!}
       DEBUG: ${DEBUG:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      ROS_ODOM_TOPIC: ${ROS_ODOM_TOPIC:-/odom}
+      ROS_POSE_TOPIC: ${ROS_POSE_TOPIC:-/amcl_pose}
+      ROS_SIMULATION: ${ROS_SIMULATION:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -64,25 +75,25 @@ services:
       - internal
 
   frontend:
+    image: cucumberbot-frontend:${IMAGE_TAG:-local}
     build:
       context: ../frontend
-      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "${HTTP_PORT:-80}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - internal
 
+  # ROS 2 Humble: rosbridge + nav2_map_server. Локально — `--profile demo`, в CI включён всегда.
+  # На сервере не используется: rosbridge запущен на самом роботе (ROSBRIDGE_URL).
   rosbridge:
-    image: ros:noetic-ros-base
+    image: cucumberbot-ros2:${ROS_IMAGE_TAG:-local}
+    build:
+      context: ./ros2
     restart: unless-stopped
-    command: >
-      bash -c "apt-get update -qq &&
-               apt-get install -y ros-noetic-rosbridge-server &&
-               source /opt/ros/noetic/setup.bash &&
-               roslaunch rosbridge_server rosbridge_websocket.launch"
     ports:
       - "9090:9090"
     networks:

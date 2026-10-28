@@ -31,8 +31,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",") if o.strip()],
+    allow_credentials=settings.cors_origins.strip() != "*",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -47,4 +47,5 @@ app.include_router(users_router, prefix="/api/v1/users", tags=["users"])
 
 @app.get("/api/v1/health")
 async def health():
-    return {"status": "ok"}
+    # robot_connected — есть ли соединение с rosbridge робота (сам API работает и без него)
+    return {"status": "ok", "robot_connected": get_rosbridge_client().is_connected}

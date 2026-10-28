@@ -1,0 +1,23 @@
+# Стек для системных тестов в CI: отдельный COMPOSE_PROJECT_NAME на каждый пайплайн,
+# свои тома, наружу ничего не публикуется. Тесты запускаются контейнером в сети <project>_internal.
+# Вместо реального робота — ROS 2 Humble с rosbridge.
+
+services:
+  minio:
+    ports: !reset []
+
+  backend:
+    environment:
+      ROSBRIDGE_URL: ws://rosbridge:9090
+      ROS_SIMULATION: "false"
+    ports: !reset []
+    depends_on:
+      rosbridge:
+        condition: service_healthy
+
+  frontend:
+    ports: !reset []
+
+  rosbridge:
+    profiles: !reset []
+    ports: !reset []

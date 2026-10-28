@@ -1,0 +1,50 @@
+# Боевой сервер (тот же, что у сайта neyasiti-web): HTTPS и домен обслуживает Caddy,
+# контейнеры наружу порты не публикуют. Образы собирает GitLab-runner локально.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.server.yml --env-file <файл> up -d --no-build --wait
+#
+# Секреты — в CI/CD-переменной CUCUMBERBOT_ENV (тип File), шаблон: .env.example
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    # консоль MinIO — только с самого сервера: ssh -L 19001:127.0.0.1:19001 <server>
+    ports: !override
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-19001}:9001"
+    logging: *logging
+
+  backend:
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      DEFAULT_ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
+      DEFAULT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
+      ROSBRIDGE_URL: ${ROSBRIDGE_URL:?ROSBRIDGE_URL is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://cutecumber.neyasyti.ru}
+      DEBUG: "false"
+      ROS_SIMULATION: ${ROS_SIMULATION:-false}
+    ports: !reset []
+    logging: *logging
+
+  frontend:
+    ports: !reset []
+    networks:
+      internal:
+      # Caddy проксирует cutecumber.neyasyti.ru → cucumberbot-web:80
+      caddy_net:
+        aliases: [cucumberbot-web]
+    logging: *logging
+
+networks:
+  caddy_net:
+    external: true

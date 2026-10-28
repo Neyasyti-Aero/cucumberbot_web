@@ -60,6 +60,44 @@ export async function uploadImage(file: File): Promise<string> {
   return data.key
 }
 
+/** Скачивает бинарный ответ API как файл (нужен Authorization, поэтому не обычная ссылка) */
+async function downloadFile(url: string, filename: string, method: 'get' | 'post' = 'get') {
+  const { data } = await api.request({ url, method, responseType: 'blob' })
+  const href = URL.createObjectURL(data)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(href)
+}
+
+/** map.pgm + map.yaml для nav2_map_server */
+export function downloadNav2Map(id: string) {
+  return downloadFile(`/maps/${id}/nav2.zip`, `map_${id}.zip`)
+}
+
+export interface Nav2Report {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+  width: number
+  height: number
+  resolution: number
+}
+
+export async function validateNav2Map(id: string): Promise<Nav2Report> {
+  const { data } = await api.get<Nav2Report>(`/maps/${id}/nav2/validate`)
+  return data
+}
+
+/** Создаёт метки для QR-точек карты и скачивает PDF для печати */
+export async function generateQrSheet(id: string, sizeMm = 50): Promise<number> {
+  const { data } = await api.post<{ created: unknown[]; kept: unknown[] }>(`/qr/maps/${id}/sync`)
+  const total = data.created.length + data.kept.length
+  if (total > 0) await downloadFile(`/qr/maps/${id}/sheet.pdf?size_mm=${sizeMm}`, `qr_${id}.pdf`)
+  return total
+}
+
 export async function getImageBlobUrl(key: string): Promise<string> {
   const { data } = await api.get(`/maps/images/${key}`, { responseType: 'blob' })
   return URL.createObjectURL(data)

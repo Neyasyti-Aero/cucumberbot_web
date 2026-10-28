@@ -6,6 +6,8 @@ class Settings(BaseSettings):
 
     app_name: str = "CucumberBot API"
     debug: bool = False
+    # Через запятую; "*" — разрешить все (только для разработки)
+    cors_origins: str = "*"
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@db:5432/cucumberbot"
     database_sync_url: str = "postgresql://postgres:postgres@db:5432/cucumberbot"
@@ -17,6 +19,13 @@ class Settings(BaseSettings):
 
     rosbridge_url: str = "ws://rosbridge:9090"
     rosbridge_reconnect_interval: float = 5.0
+    ros_odom_topic: str = "/odom"
+    # Поза в кадре map: Nav2 AMCL публикует geometry_msgs/msg/PoseWithCovarianceStamped
+    ros_pose_topic: str = "/amcl_pose"
+    # Через сколько секунд без обновлений поза считается устаревшей
+    pose_stale_seconds: float = 5.0
+    # Если реального rosbridge нет, отдавать имитацию телеметрии (удобно для разработки)
+    ros_simulation: bool = True
 
     minio_endpoint: str = "minio:9000"
     minio_access_key: str = "minioadmin"

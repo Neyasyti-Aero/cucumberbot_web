@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+extend-exclude = ["alembic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+# B008: Depends()/Query() в аргументах по умолчанию — штатный паттерн FastAPI
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+known-first-party = ["src", "config"]

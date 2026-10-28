@@ -32,3 +32,12 @@ api.interceptors.response.use(
     return Promise.reject(error)
   },
 )
+
+/** Текст ошибки для уведомлений: detail из ответа FastAPI или сообщение исключения */
+export function apiErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const detail = err.response?.data?.detail
+    if (typeof detail === 'string') return detail
+  }
+  return err instanceof Error ? err.message : String(err)
+}
