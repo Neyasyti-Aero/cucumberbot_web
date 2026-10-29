@@ -4,7 +4,7 @@
 деплоится по той же схеме: GitLab-runner (shell) на сервере собирает образы локальным docker'ом и
 поднимает стек, Caddy отдаёт его по HTTPS.
 
-**Адрес:** https://cutecumber.neyasyti.ru
+**Адрес:** https://ogurec.neyasyti.ru
 
 ```
 git.neyasyti.ru                              сервер 4V100 (77.50.187.110 → 192.168.1.2)
@@ -36,7 +36,7 @@ git.neyasyti.ru                              сервер 4V100 (77.50.187.110 �
 | system | `system:tests` | изолированный стек и ROS 2 Humble, подробности ниже | MR, main |
 | deploy | `deploy:production` | `docker compose up --wait`: job падает, если сервис не стал healthy | main |
 | verify | `verify:internal` | путь Caddy → nginx → backend внутри `caddy_net` | main |
-| verify | `verify:public` | `https://cutecumber.neyasyti.ru` снаружи (DNS + TLS); `allow_failure`, пока не настроены шаги 1 и 5 | main |
+| verify | `verify:public` | `https://ogurec.neyasyti.ru` снаружи (DNS + TLS); `allow_failure`, пока не настроены шаги 1 и 5 | main |
 
 Что делает `system:tests` (отдельный compose-проект `cucumberbot-ci-<pipeline id>`, после job он удаляется вместе с томами):
 1. Откатывает миграции Alembic до нуля и применяет их заново.
@@ -62,14 +62,23 @@ git push gitlab main
 
 GitHub можно оставить зеркалом или убрать. В репозитории больше нет `.github/workflows`, весь CI/CD собран в `.gitlab-ci.yml`.
 
+> ⚠️ **Пустой репозиторий GitLab блокирует самый первый пуш** вне зависимости от имени ветки:
+> `You cannot push the initial commit because the default branch is protected and your role does not allow it.`
+> Это не Protected branches самого проекта (та проверка появляется только когда ветка уже существует),
+> а **Default branch protection на уровне группы** `neyasyti-aero`. Снять её может только Owner группы:
+> **Group `neyasyti-aero` → Settings → General → Permissions and group features → Default branch protection**
+> → `Not protected`, запушить, вернуть обратно. Проще — временно выдать Maintainer в самом проекте
+> (**Project → Members**), тогда initial-commit проверка не сработает. После первого пуша роль/защиту
+> можно вернуть: дальнейшие деплои идут через runner, а не через прямой push с чьей-то машины.
+
 ## 1. DNS
 
 | Тип | Имя | Значение |
 |-----|-----|----------|
-| A   | cutecumber | `77.50.187.110` |
+| A   | ogurec | `77.50.187.110` |
 
-Регистр в DNS-имени не важен: `CUTECUMBER.neyasyti.ru` и `cutecumber.neyasyti.ru` — один и тот же адрес.
-Проверка: `dig +short cutecumber.neyasyti.ru` → `77.50.187.110`.
+Регистр в DNS-имени не важен: `OGUREC.neyasyti.ru` и `ogurec.neyasyti.ru` — один и тот же адрес.
+Проверка: `dig +short ogurec.neyasyti.ru` → `77.50.187.110`.
 
 ## 2. Runner
 
@@ -109,7 +118,7 @@ ROSBRIDGE_URL=ws://<адрес робота в VPN>:9090
 ROS_ODOM_TOPIC=/odom
 ROS_POSE_TOPIC=/amcl_pose
 ROS_SIMULATION=false
-CORS_ORIGINS=https://cutecumber.neyasyti.ru
+CORS_ORIGINS=https://ogurec.neyasyti.ru
 DEBUG=false
 MINIO_CONSOLE_PORT=19001
 ```
@@ -150,7 +159,7 @@ docker exec caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfi
 docker restart caddy
 ```
 
-Проверка: `curl -I https://cutecumber.neyasyti.ru` → 200. После этого job `verify:public` станет зелёным.
+Проверка: `curl -I https://ogurec.neyasyti.ru` → 200. После этого job `verify:public` станет зелёным.
 
 ## 6. После запуска
 

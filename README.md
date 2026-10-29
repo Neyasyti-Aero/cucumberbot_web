@@ -5,7 +5,7 @@
 
 Подробная архитектура и схема взаимодействия компонентов — в [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Прод:** https://cutecumber.neyasyti.ru — деплой через GitLab CI, инструкция: [deploy/README.md](deploy/README.md).
+**Прод:** https://ogurec.neyasyti.ru — деплой через GitLab CI, инструкция: [deploy/README.md](deploy/README.md).
 
 ## Стек
 
@@ -153,7 +153,7 @@ Dev-сервер Vite (`http://localhost:5173`) проксирует `/api` и `
 
 - [ ] Сменить `JWT_SECRET`, пароли БД/MinIO и пароль дефолтного администратора
 - [ ] `DEBUG=false` (отключает Swagger/Redoc)
-- [ ] `CORS_ORIGINS=https://cutecumber.neyasyti.ru`
+- [ ] `CORS_ORIGINS=https://ogurec.neyasyti.ru`
 - [ ] TLS — Caddy на сервере (`deploy/caddy/cucumberbot.conf`)
 - [ ] Указать корректный `ROSBRIDGE_URL` робота, профиль `demo` не использовать в проде
 - [ ] Сменить пароль администратора после первого входа

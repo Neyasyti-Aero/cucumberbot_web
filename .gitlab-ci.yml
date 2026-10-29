@@ -1,6 +1,6 @@
 # CucumberBot Web — CI/CD по той же схеме, что у сайта (neyasiti-aero/website):
 # shell-runner на сервере, образы собираются локальным docker'ом, без Registry, dind и SSH.
-# Домен: https://cutecumber.neyasyti.ru (Caddy → cucumberbot-web:80 по сети caddy_net).
+# Домен: https://ogurec.neyasyti.ru (Caddy → cucumberbot-web:80 по сети caddy_net).
 # Инструкция по настройке: deploy/README.md
 #
 #   check   — линт и юнит-тесты (внутри docker build --target test), сборка фронтенда (tsc + vite)
@@ -24,7 +24,7 @@ variables:
   ROS_IMAGE_TAG: ci
   TEST_IMAGE: cucumberbot-backend-test:$CI_COMMIT_SHORT_SHA
   PROD_PROJECT: cucumberbot
-  PROD_DOMAIN: cutecumber.neyasyti.ru
+  PROD_DOMAIN: ogurec.neyasyti.ru
   COMPOSE_PROD: docker compose -p cucumberbot -f docker/docker-compose.yml -f docker/docker-compose.server.yml
   DOCKER_BUILDKIT: "1"
 
@@ -123,7 +123,9 @@ verify:internal:
   script:
     # путь Caddy → frontend(nginx) → backend внутри сети caddy_net
     - docker exec caddy wget -qO- http://cucumberbot-web/ | grep -q '<div id="root">'
-    - docker exec caddy wget -qO- http://cucumberbot-web/api/v1/health | tee /dev/stderr | grep -q '"status":"ok"'
+    # вывод wget попадает в лог job'а через stdout runner'а (docker exec его пробрасывает)
+    - docker exec caddy wget -qO- http://cucumberbot-web/api/v1/health
+    - docker exec caddy wget -qO- http://cucumberbot-web/api/v1/health | grep -q '"status":"ok"'
 
 verify:public:
   stage: verify

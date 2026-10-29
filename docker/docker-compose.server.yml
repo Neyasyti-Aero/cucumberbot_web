@@ -30,7 +30,7 @@ services:
       DEFAULT_ADMIN_EMAIL: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
       DEFAULT_ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       ROSBRIDGE_URL: ${ROSBRIDGE_URL:?ROSBRIDGE_URL is required}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://cutecumber.neyasyti.ru}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://ogurec.neyasyti.ru}
       DEBUG: "false"
       ROS_SIMULATION: ${ROS_SIMULATION:-false}
     ports: !reset []
@@ -40,7 +40,7 @@ services:
     ports: !reset []
     networks:
       internal:
-      # Caddy проксирует cutecumber.neyasyti.ru → cucumberbot-web:80
+      # Caddy проксирует ogurec.neyasyti.ru → cucumberbot-web:80
       caddy_net:
         aliases: [cucumberbot-web]
     logging: *logging
